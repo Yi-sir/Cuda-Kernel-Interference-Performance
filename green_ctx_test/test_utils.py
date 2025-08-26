@@ -285,7 +285,7 @@ def plt_draw2(
         linewidth=2,
         markersize=8,
     )
-    ax2.set_ylabel("Performance (GFLOPS)", color="black")
+    ax2.set_ylabel("Performance", color="black")
     ax2.tick_params(axis="y", labelcolor="black")
 
     for i in range(len(sms_labels)):
