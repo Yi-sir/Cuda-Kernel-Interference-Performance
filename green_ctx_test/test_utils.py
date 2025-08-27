@@ -1,20 +1,41 @@
 import logging
+import os
+import sys
 import time
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(BASE_DIR)
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from fp8_gemm.test_fp8_gemm import (fp8_matmul, get_gemm_params,
+                                    test_w8a8_block_fp8_matmul)
+from mla.test_mla_decode import flash_mla, get_mla_params, test_flash_mla
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-EVENT_KEY_DICT = {
-    "mla": "void flash::flash_fwd_splitkv_mla_kernel",
-    "gemm": "_w8a8_block_fp8_matmul",
+KERNEL_DICT = {
+    "mla": {
+        "kernel": flash_mla,
+        "params": get_mla_params,
+        "prepare": test_flash_mla,
+        "key": "void flash::flash_fwd_splitkv_mla_kernel"
+    },
+    "gemm": {
+        "kernel": fp8_matmul,
+        "params": get_gemm_params,
+        "prepare": test_w8a8_block_fp8_matmul,
+        "key": "_w8a8_block_fp8_matmul"
+    }
 }
 
 
-def profile_a_kernel(kernel_function, kernel_inputs, stream):
+def profile_a_kernel(key, kernel_inputs, stream, repeat=10):
+
+    kernel_function = KERNEL_DICT[key]["kernel"]
     # warmup
     with torch.cuda.stream(stream):
         kernel_function(*kernel_inputs)
@@ -30,7 +51,8 @@ def profile_a_kernel(kernel_function, kernel_inputs, stream):
         with_stack=True,
     ) as prof:
         with torch.cuda.stream(stream):
-            kernel_function(*kernel_inputs)
+            for _ in range(repeat):
+                kernel_function(*kernel_inputs)
 
     events = prof.key_averages()
     max_cuda_time = max(
@@ -44,22 +66,23 @@ def profile_a_kernel(kernel_function, kernel_inputs, stream):
     return max_cuda_time  # us
 
 
-def get_best_performance(kernel_func, kernel_inputs):
+def get_best_performance(key, kernel_inputs):
     stream = torch.cuda.Stream()
-    return profile_a_kernel(kernel_func, kernel_inputs, stream) / 1000  # ms
+    return profile_a_kernel(key, kernel_inputs, stream) / 1000  # ms
 
 
 def benchmark_parallel_ops(
     stream0,
     stream1,
-    kernel0,
-    kernel1,
     input0,
     input1,
     key0,
     key1,
     target_duration_ms=1000,
 ):
+    kernel0 = KERNEL_DICT[key0]["kernel"]
+    kernel1 = KERNEL_DICT[key1]["kernel"]
+
     # Warmup
     with torch.cuda.stream(stream0):
         _ = kernel0(*input0)
@@ -68,8 +91,8 @@ def benchmark_parallel_ops(
     torch.cuda.synchronize()
 
     # Estimate individual op durations
-    duration_0 = profile_a_kernel(kernel0, input0, stream0) / 1000  # ms
-    duration_1 = profile_a_kernel(kernel1, input1, stream1) / 1000  # ms
+    duration_0 = profile_a_kernel(key0, input0, stream0) / 1000  # ms
+    duration_1 = profile_a_kernel(key1, input1, stream1) / 1000  # ms
 
     # Calculate loop counts based on target duration
     kernel0_loops = max(1, int(target_duration_ms / duration_0))
@@ -98,8 +121,8 @@ def benchmark_parallel_ops(
     prof.stop()
 
     # Process results
-    v0 = EVENT_KEY_DICT[key0]
-    v1 = EVENT_KEY_DICT[key1]
+    v0 = KERNEL_DICT[key0]["key"]
+    v1 = KERNEL_DICT[key1]["key"]
 
     events = prof.events()
 

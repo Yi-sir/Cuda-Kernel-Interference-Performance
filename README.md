@@ -18,7 +18,8 @@
 │   ├── green_ctx_test_fp8.py  # green ctx测试deep gemm，需要放在DeepGEMM/tests目录下使用
 │   ├── green_ctx_triton.py    # 遗留物，green ctx测试triton vector add
 │   ├── interference
-│   │   ├── gemm_and_mladecode.py # 测试gemm和mla decode并行运行的干扰
+│   │   ├── gemm_and_mladecode.py # 测试gemm和mla decode并行运行的干扰，功能已合入interference_test.py
+│   │   ├── interference_test.py  # 通用测试脚本，支持连续测试任意多对算子
 │   │   └── mla_gemm.png       # 参考结果示例
 │   ├── mla_decode.py          # green ctx测试MLA Decode
 │   └── test_utils.py          # 测试辅助函数
@@ -38,7 +39,7 @@
 
 ```shell
 cd green_ctx_test/interference
-python3 ./gemm_and_mladecode.py
+python3 ./interference_test.py
 ```
 
 ![example](green_ctx_test/interference/mla_gemm.png)

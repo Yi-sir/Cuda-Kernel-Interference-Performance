@@ -11,9 +11,8 @@ sys.path.append(BASE_DIR)
 from fp8_gemm.test_fp8_gemm import (fp8_matmul, get_gemm_params,
                                     test_w8a8_block_fp8_matmul)
 from green_context.green_context import get_stream_pairs
-from green_ctx_test.test_utils import (EVENT_KEY_DICT, benchmark_parallel_ops,
-                                       get_best_performance, plt_draw,
-                                       plt_draw2)
+from green_ctx_test.test_utils import (benchmark_parallel_ops,
+                                       get_best_performance, plt_draw2)
 from mla.test_mla_decode import flash_mla, get_mla_params, test_flash_mla
 
 logging.basicConfig(level=logging.INFO)
@@ -39,8 +38,6 @@ if __name__ == "__main__":
         t0, t1 = benchmark_parallel_ops(
             stream0,
             stream1,
-            flash_mla,
-            fp8_matmul,
             mla_input,
             gemm_input,
             "mla",
@@ -51,8 +48,8 @@ if __name__ == "__main__":
         gemm_times.append(t1)
         sms_labels.append(f"({sms0},{sms1})")
 
-    mla_best_time = get_best_performance(flash_mla, mla_input)
-    gemm_best_time = get_best_performance(fp8_matmul, gemm_input)
+    mla_best_time = get_best_performance("mla", mla_input)
+    gemm_best_time = get_best_performance("gemm", gemm_input)
 
     mla_times.insert(0, float("inf"))
     mla_times.append(mla_best_time)
