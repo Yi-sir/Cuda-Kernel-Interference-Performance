@@ -2,11 +2,16 @@ import logging
 import os
 import random
 import sys
+import time
 
 import torch
-from vllm.attention.ops.flashmla import (flash_mla_with_kvcache,
-                                         get_mla_metadata)
+from vllm.config import VllmConfig, set_current_vllm_config
+from vllm.model_executor.layers.fused_moe import fused_experts
+from vllm.model_executor.layers.fused_moe.fused_moe import fused_topk
 from vllm.triton_utils import triton
+
+from .utils import (make_test_weights, native_per_token_group_quant_fp8,
+                       native_w8a8_block_matmul)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
@@ -18,95 +23,82 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @register_kernel
-class MLADecode(KernelBase):
+class FusedMoE(KernelBase):
 
     _default_params = {
-        "b": 128,
-        "s_q": 1,
-        "mean_sk": 1024,
-        "h_q": 128,
-        "h_kv": 1,
-        "d": 576,
-        "dv": 512,
-        "block_size": 64,
-        "causal": True,
-        "varlen": False,
+        "M": 128,  # batch size
+        "N": 4608,  # for TP8(?)
+        "K": 7168,  # hidden size
+        "E": 32,
+        "topk": 4,
+        "block_size": [128, 128],
+        "dtype": torch.bfloat16,
+        "seed": 0,
     }
 
-    _kernel_name = "mla_decode"
-    _key = "void flash::flash_fwd_splitkv_mla_kernel"
+    _kernel_name = "fused_moe"
+    _key = "fused_moe_kernel"
 
     def __init__(self, device: torch.device):
         super().__init__(device)
 
     def prepare_input(self):
-        def prepare(
-            b, s_q, mean_sk, h_q, h_kv, d, dv, block_size, causal, varlen, device
-        ):
-            dtype = torch.bfloat16
-            torch.set_default_dtype(dtype)
+        def prepare(M, N, K, E, topk, block_size, dtype, seed, device):
             torch.set_default_device(device)
-            torch.cuda.set_device(device)
-            torch.manual_seed(0)
-            random.seed(0)
+            torch.manual_seed(seed)
 
-            cache_seqlens = torch.full((b,), mean_sk, dtype=torch.int32)
-            if varlen:
-                for i in range(b):
-                    cache_seqlens[i] = max(random.normalvariate(mean_sk, mean_sk / 2), s_q)
-            total_seqlens = cache_seqlens.sum().item()
-            max_seqlen = cache_seqlens.max().item()
-            max_seqlen_pad = triton.cdiv(max_seqlen, 256) * 256
+            os.environ["VLLM_FUSED_MOE_CHUNK_SIZE"] = "2048"
 
-            q = torch.randn(b, s_q, h_q, d)
-            block_table = torch.arange(
-                b * max_seqlen_pad // block_size, dtype=torch.int32
-            ).view(b, max_seqlen_pad // block_size)
-            blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d)
-            for i in range(b):
-                blocked_k.view(b, max_seqlen_pad, h_kv, d)[i, cache_seqlens[i].item() :] = (
-                    float("nan")
-                )
-            blocked_v = blocked_k[..., :dv]
+            a = torch.randn((M, K), dtype=dtype) / 10
+            score = torch.randn((M, E), dtype=dtype)
 
-            tile_scheduler_metadata, num_splits = get_mla_metadata(
-                cache_seqlens, s_q * h_q // h_kv, h_kv
+            _, w1, w1_s, _, w2, w2_s = make_test_weights(
+                E,
+                N,
+                K,
+                dtype,
+                torch.float8_e4m3fn,
+                per_act_token_quant=False,
+                block_shape=block_size,
             )
 
+            topk_weights, topk_ids, _ = fused_topk(a, score.float(), topk, False)
+
             return (
-                q,
-                blocked_k,
-                block_table,
-                cache_seqlens,
-                dv,
-                tile_scheduler_metadata,
-                num_splits,
-                causal,
+                a,
+                w1,
+                w2,
+                topk_weights,
+                topk_ids,
+                w1_s,
+                w2_s,
             )
         logger.debug(f"Prepare input for {self.__class__._kernel_name} >>>>>")
         logger.debug(f"Params are {self.params}")
         self.inputs = prepare(**self.params, device=self.device)
 
     def launch_kernel(self):
-        def flash_mla(
-            q,
-            blocked_k,
-            block_table,
-            cache_seqlens,
-            dv,
-            tile_scheduler_metadata,
-            num_splits,
-            causal,
+        block_size = self.params["block_size"]
+        def test_w8a8_block_fp8_fused_moe(
+            a,
+            w1,
+            w2,
+            topk_weights,
+            topk_ids,
+            w1_s,
+            w2_s,
+            block_size,
         ):
-            return flash_mla_with_kvcache(
-                q,
-                blocked_k,
-                block_table,
-                cache_seqlens,
-                dv,
-                tile_scheduler_metadata,
-                num_splits,
-                causal=causal,
+            out = fused_experts(
+                a,
+                w1,
+                w2,
+                topk_weights,
+                topk_ids,
+                use_fp8_w8a8=True,
+                w1_scale=w1_s,
+                w2_scale=w2_s,
+                block_shape=block_size,
             )
 
-        return flash_mla(*self.inputs)
+        return test_w8a8_block_fp8_fused_moe(*self.inputs, block_size=block_size)

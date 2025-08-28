@@ -9,16 +9,19 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.append(BASE_DIR)
 
 from green_context.green_context import get_stream_pairs
-from green_ctx_test.test_utils import (benchmark_parallel_ops, plt_draw2)
+from green_ctx_test.test_utils import (benchmark_parallel_ops, plt_draw)
 
-from mla.kernel_mla_decode import MLADecode
 from fp8_gemm.kernel_triton_gemm import TritonGemm
+from mla.kernel_mla_decode import MLADecode
+from moe.kernel_fused_moe import FusedMoE
+
 from kernel_base.registry import get_kernel_class
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-KERNELS = ["mla_decode", "triton_gemm"]
+KERNELS = ["mla_decode", "triton_gemm", "fused_moe"]
+# KERNELS = ["triton_gemm", "fused_moe"]
 
 
 def get_next_pair(lst):
@@ -32,6 +35,8 @@ def interference_test():
     stream_pairs = get_stream_pairs(device=device)
 
     for k0, k1 in get_next_pair(KERNELS):
+        torch.cuda.synchronize()
+
         obj0 = get_kernel_class(k0)(device)
         obj1 = get_kernel_class(k1)(device)
 
@@ -69,7 +74,7 @@ def interference_test():
         k0_performance = [k0_best_time / t for t in k0_times]
         k1_performance = [k1_best_time / t for t in k1_times]
 
-        plt_draw2(
+        plt_draw(
             k0_times,
             k0_performance,
             k0,
