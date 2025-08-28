@@ -10,89 +10,30 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from fp8_gemm.test_fp8_gemm import (fp8_matmul, get_gemm_params,
-                                    test_w8a8_block_fp8_matmul)
-from mla.test_mla_decode import flash_mla, get_mla_params, test_flash_mla
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-KERNEL_DICT = {
-    "mla": {
-        "kernel": flash_mla,
-        "params": get_mla_params,
-        "prepare": test_flash_mla,
-        "key": "void flash::flash_fwd_splitkv_mla_kernel"
-    },
-    "gemm": {
-        "kernel": fp8_matmul,
-        "params": get_gemm_params,
-        "prepare": test_w8a8_block_fp8_matmul,
-        "key": "_w8a8_block_fp8_matmul"
-    }
-}
-
-
-def profile_a_kernel(key, kernel_inputs, stream, repeat=10):
-
-    kernel_function = KERNEL_DICT[key]["kernel"]
-    # warmup
-    with torch.cuda.stream(stream):
-        kernel_function(*kernel_inputs)
-    torch.cuda.synchronize()
-
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CUDA,
-            torch.profiler.ProfilerActivity.CPU,
-        ],
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True,
-    ) as prof:
-        with torch.cuda.stream(stream):
-            for _ in range(repeat):
-                kernel_function(*kernel_inputs)
-
-    events = prof.key_averages()
-    max_cuda_time = max(
-        (
-            event.device_time
-            for event in events
-            if event.device_type != torch.autograd.DeviceType.CPU
-        ),
-        default=0.0,
-    )
-    return max_cuda_time  # us
-
-
-def get_best_performance(key, kernel_inputs):
-    stream = torch.cuda.Stream()
-    return profile_a_kernel(key, kernel_inputs, stream) / 1000  # ms
-
 
 def benchmark_parallel_ops(
     stream0,
     stream1,
-    input0,
-    input1,
-    key0,
-    key1,
+    obj0,
+    obj1,
     target_duration_ms=1000,
 ):
-    kernel0 = KERNEL_DICT[key0]["kernel"]
-    kernel1 = KERNEL_DICT[key1]["kernel"]
+    key0 = obj0._kernel_name
+    key1 = obj1._kernel_name
 
     # Warmup
     with torch.cuda.stream(stream0):
-        _ = kernel0(*input0)
+        _ = obj0.launch_kernel()
     with torch.cuda.stream(stream1):
-        _ = kernel1(*input1)
+        _ = obj1.launch_kernel()
     torch.cuda.synchronize()
 
     # Estimate individual op durations
-    duration_0 = profile_a_kernel(key0, input0, stream0) / 1000  # ms
-    duration_1 = profile_a_kernel(key1, input1, stream1) / 1000  # ms
+    duration_0 = obj0.profile_kernel_us(stream0) / 1000
+    duration_1 = obj1.profile_kernel_us(stream1) / 1000
+
 
     # Calculate loop counts based on target duration
     kernel0_loops = max(1, int(target_duration_ms / duration_0))
@@ -113,16 +54,16 @@ def benchmark_parallel_ops(
     prof.start()
     with torch.cuda.stream(stream0):
         for _ in range(kernel0_loops):
-            _ = kernel0(*input0)
+            _ = obj0.launch_kernel()
     with torch.cuda.stream(stream1):
         for _ in range(kernel1_loops):
-            _ = kernel1(*input1)
+            _ = obj1.launch_kernel()
     torch.cuda.synchronize()
     prof.stop()
 
     # Process results
-    v0 = KERNEL_DICT[key0]["key"]
-    v1 = KERNEL_DICT[key1]["key"]
+    v0 = obj0._key
+    v1 = obj1._key
 
     events = prof.events()
 

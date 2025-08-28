@@ -9,8 +9,7 @@ import logging
 import torch
 from test_utils import profile_a_kernel
 
-from fp8_gemm.test_fp8_gemm import (fp8_matmul, get_gemm_params,
-                                    test_w8a8_block_fp8_matmul)
+from fp8_gemm.kernel_triton_gemm import TritonGemm
 from green_context.green_context import get_all_streams
 
 logging.basicConfig(level=logging.INFO)
@@ -19,17 +18,16 @@ logger = logging.getLogger(__name__)
 if __name__ == "__main__":
 
     device = torch.device("cuda:0")
-
     streams = get_all_streams(device)
 
-    params = get_gemm_params()
+    triton_gemm = TritonGemm(device)
 
     all_times = {}
 
-    matmul_input = test_w8a8_block_fp8_matmul(**params, device=device)
+    triton_gemm.prepare_input()
 
     for stream, num_sm in streams:
-        t = profile_a_kernel(fp8_matmul, matmul_input, stream)
+        t = triton_gemm.profile_kernel_us(stream)
         all_times[num_sm] = t
 
     for k, v in all_times.items():
