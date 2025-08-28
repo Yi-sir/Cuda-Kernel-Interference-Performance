@@ -4,6 +4,7 @@
 
 ```shell
 cd green_ctx_test/interference
+# if meet errors about cuda sync, try CUDA_LAUNCH_BLOCKING=1
 python3 ./interference_test.py
 ```
 
