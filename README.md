@@ -9,7 +9,7 @@ This repository provides a standardized framework for CUDA kernel performance te
 Base class exposing the following key methods for standardized kernel testing workflows:
 
 - get_param_list(): Retrieves configurable kernel parameters
-- set_params(): Applies runtime parameters
+- set_params_and_prepare_input(): Applies runtime parameters
 - prepare_input(): Handles input data preparation
 - launch_kernel(): Executes the CUDA kernel
 - profile_kernel_us(): Measures kernel execution time (μs)

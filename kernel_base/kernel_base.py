@@ -26,6 +26,7 @@ class KernelBase(ABC):
             if key not in self.__class__._default_params:
                 raise ValueError(f"Invalid param '{key}'. Valid params: {self.get_param_list()}")
         self.params.update(params)
+        self.prepare_input()
 
     @abstractmethod
     def prepare_input(self):
