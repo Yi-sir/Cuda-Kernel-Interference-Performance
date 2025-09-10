@@ -9,27 +9,24 @@ import logging
 import torch
 
 from green_context.green_context import get_all_streams
-from mla.kernel_mla_decode import MLADecode
+from masked_group_gemm.kernel_mgg import MaskedGroupGemm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 if __name__ == "__main__":
-
     device = torch.device("cuda:0")
     streams = get_all_streams(device)
 
-    mla_decode = MLADecode(device)
+    mgg = MaskedGroupGemm(device)
+    mgg.prepare_input()
 
-    mla_times = {}
-
-    mla_decode.prepare_input()
+    mgg_times = {}
 
     for stream, num_sm in streams:
         with torch.cuda.stream(stream):
-            mla_time = mla_decode.profile_kernel_us(stream)
-            mla_times[num_sm] = mla_time
+            t = mgg.profile_kernel_us(stream)
+            mgg_times[num_sm] = t
 
-    for k, v in mla_times.items():
-        logger.info(f"With SMs {k}, MLA cost {v:.3f}us")
+    for k, v in mgg_times.items():
+        logger.info(f"With SMs {k}, MGG cost {v:.3f}us")

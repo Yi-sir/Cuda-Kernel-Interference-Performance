@@ -36,8 +36,10 @@ class KernelBase(ABC):
     def launch_kernel(self):
         raise NotImplementedError("launch_kernel must be implemented in subclasses.")
 
-    def profile_kernel_us(self, stream: torch.cuda.Stream, repeat=10) -> float:
+    def profile_kernel_us(self, stream: Optional[torch.cuda.Stream]=None, repeat=10, show_table=False) -> float:
         assert self.inputs is not None, "Please initialize inputs first!"
+        if stream is None:
+            stream = torch.cuda.Stream()
         # warmup
         with torch.cuda.stream(stream):
             self.launch_kernel()
@@ -65,9 +67,11 @@ class KernelBase(ABC):
             ),
             default=0.0,
         )
+
+        if show_table:
+            print(events.table(sort_by="self_cuda_time_total", row_limit=-1))
+
         return max_cuda_time
 
     def get_best_performance_us(self) -> float:
-        assert self.inputs is not None, "Please initialize inputs first!"
-        stream = torch.cuda.Stream()
-        return self.profile_kernel_us(stream)
+        return self.profile_kernel_us()
