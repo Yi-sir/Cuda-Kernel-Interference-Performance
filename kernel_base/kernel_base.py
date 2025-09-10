@@ -5,6 +5,7 @@ import torch
 
 from .registry import register_kernel
 
+
 @register_kernel
 class KernelBase(ABC):
 
@@ -24,7 +25,9 @@ class KernelBase(ABC):
     def set_params(self, params: Dict[str, Any]):
         for key in params:
             if key not in self.__class__._default_params:
-                raise ValueError(f"Invalid param '{key}'. Valid params: {self.get_param_list()}")
+                raise ValueError(
+                    f"Invalid param '{key}'. Valid params: {self.get_param_list()}"
+                )
         self.params.update(params)
         self.prepare_input()
 
@@ -36,14 +39,23 @@ class KernelBase(ABC):
     def launch_kernel(self):
         raise NotImplementedError("launch_kernel must be implemented in subclasses.")
 
-    def profile_kernel_us(self, stream: Optional[torch.cuda.Stream]=None, repeat=10, show_table=False) -> float:
+    def profile_kernel_us(
+        self,
+        stream: Optional[torch.cuda.Stream] = None,
+        repeat=10,
+        show_table=False,
+        skip_warmup=False,
+    ) -> float:
         assert self.inputs is not None, "Please initialize inputs first!"
+        assert repeat > 0 and isinstance(repeat, int), "repeat must be an integer"
         if stream is None:
             stream = torch.cuda.Stream()
+
         # warmup
-        with torch.cuda.stream(stream):
-            self.launch_kernel()
-        torch.cuda.synchronize()
+        if not skip_warmup:
+            with torch.cuda.stream(stream):
+                self.launch_kernel()
+            torch.cuda.synchronize()
 
         with torch.profiler.profile(
             activities=[
@@ -62,8 +74,8 @@ class KernelBase(ABC):
             (
                 event.device_time
                 for event in events
-                if event.device_type != torch.autograd.DeviceType.CPU and
-                event.key.startswith(self.__class__._key)
+                if event.device_type != torch.autograd.DeviceType.CPU
+                and event.key.startswith(self.__class__._key)
             ),
             default=0.0,
         )
