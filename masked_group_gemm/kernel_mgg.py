@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import sys
 
 os.environ["DG_JIT_CACHE_DIR"] = os.getenv(
@@ -25,7 +26,6 @@ class MaskedGroupGemm(KernelBase):
         "M": 1024,
         "N": 4096,
         "K": 7168,
-        "active_experts_per_rank": 2,
         "expected_m": 1,
         "seed": 0
     }
@@ -37,7 +37,7 @@ class MaskedGroupGemm(KernelBase):
         super().__init__(device)
 
     def prepare_input(self):
-        def prepare(G, M, N, K, active_experts_per_rank, expected_m, seed, device):
+        def prepare(G, M, N, K, expected_m, seed, device):
             input_dtype = torch.float8_e4m3fn
             output_dtype = torch.bfloat16
             factor_for_scale = 1e-2
@@ -66,9 +66,9 @@ class MaskedGroupGemm(KernelBase):
 
             output = torch.empty((G, M, N), dtype=torch.bfloat16)
 
-            mask_m = torch.zeros(G, dtype=torch.int32)
-            indices = torch.randperm(G)[:active_experts_per_rank]
-            mask_m[indices] = expected_m
+            mask_m = torch.empty((G, ), dtype=torch.int)
+            for j in range(G):
+                mask_m[j] = int(expected_m * random.uniform(0.7, 1.3))
 
             return (hidden_states_fp8, weight_fp8, output, mask_m, expected_m)
 
