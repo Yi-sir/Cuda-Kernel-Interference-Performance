@@ -8,25 +8,40 @@ import logging
 
 import torch
 
-from green_context.green_context import get_all_streams
 from masked_group_gemm.kernel_mgg import MaskedGroupGemm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+params_list = [
+    # sglang DeepSeek moe-gemm0
+    {
+        "G": 32,
+        "M": 1024,
+        "N": 4096,
+        "K": 7168,
+        "active_experts_per_rank": 2,
+        "expected_m": 1,
+        "seed": 0,
+    },
+    # sglang DeepSeek-V3 moe-gemm1
+    {
+        "G": 32,
+        "M": 1024,
+        "N": 7168,
+        "K": 2048,
+        "active_experts_per_rank": 2,
+        "expected_m": 1,
+        "seed": 0,
+    },
+]
+
 if __name__ == "__main__":
     device = torch.device("cuda:0")
-    streams = get_all_streams(device)
 
     mgg = MaskedGroupGemm(device)
-    mgg.prepare_input()
 
-    mgg_times = {}
-
-    for stream, num_sm in streams:
-        with torch.cuda.stream(stream):
-            t = mgg.profile_kernel_us(stream)
-            mgg_times[num_sm] = t
-
-    for k, v in mgg_times.items():
-        logger.info(f"With SMs {k}, MGG cost {v:.3f}us")
+    for param in params_list:
+        mgg.set_params(param)
+        t = mgg.profile_kernel_us()
+        logger.info(f"time cost with params {param} is {t}us")
