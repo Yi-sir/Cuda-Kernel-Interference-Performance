@@ -35,7 +35,7 @@ params_list = [
     # DeepGEMM test case
     {
         "G": 4,
-        "M": 1024,
+        "M": 4096,
         "N": 7168,
         "K": 2048,
         "expected_m": 256,
