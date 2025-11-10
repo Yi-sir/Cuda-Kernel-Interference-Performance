@@ -34,18 +34,18 @@ To integrate a new operator:
 ## Single kernel test
 
 ```shell
-cd green_ctx_test
+cd test
 python3 mla_decode.py
 ```
 
 ## Interference test
 
 ```shell
-cd green_ctx_test/interference
+cd test/interference
 # if meet errors about cuda sync, try CUDA_LAUNCH_BLOCKING=1
 python3 ./interference_test.py
 ```
 
-![1](green_ctx_test/interference/mla_decode_triton_gemm.png)
-![2](green_ctx_test/interference/mla_decode_fused_moe.png)
-![3](green_ctx_test/interference/triton_gemm_fused_moe.png)
+![1](test/interference/mla_decode_triton_gemm.png)
+![2](test/interference/mla_decode_fused_moe.png)
+![3](test/interference/triton_gemm_fused_moe.png)

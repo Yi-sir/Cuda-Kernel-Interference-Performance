@@ -75,13 +75,14 @@ class KernelBase(ABC):
                 event.device_time
                 for event in events
                 if event.device_type != torch.autograd.DeviceType.CPU
-                and event.key.startswith(self.__class__._key)
+                and event.key.startswith(self._key)
             ),
             default=0.0,
         )
 
         if show_table:
             print(events.table(sort_by="self_cuda_time_total", row_limit=-1))
+            print([event.key for event in events if event.device_type != torch.autograd.DeviceType.CPU])
 
         return max_cuda_time
 
