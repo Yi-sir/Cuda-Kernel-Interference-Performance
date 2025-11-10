@@ -1,7 +1,9 @@
+import itertools
 import logging
 import os
 import sys
 import time
+from typing import Dict, List
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(BASE_DIR)
@@ -12,6 +14,19 @@ import torch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def generate_params(all_params: Dict[str, List]) -> List[Dict]:
+    param_names = list(all_params.keys())
+    value_lists = list(all_params.values())
+
+    combinations = itertools.product(*value_lists)
+
+    result = [
+        dict(zip(param_names, combo))
+        for combo in combinations
+    ]
+
+    return result
 
 def benchmark_parallel_ops(
     stream0,

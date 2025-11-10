@@ -8,7 +8,7 @@ import logging
 
 import torch
 from masked_group_gemm.kernel_mgg import MaskedGroupGemm
-from green_ctx_test.const import G, T, us, CALC_H200
+from const import G, T, us, CALC_H200
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

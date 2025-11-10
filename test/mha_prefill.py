@@ -9,40 +9,30 @@ import logging
 import torch
 
 from mha.kernel_flashinfer_mha import FlashinferMHAPrefill
+from test_utils import generate_params
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-params_list = [
-    {
-        "batch_size": 7,
-        "num_layers": 1,
-        "num_qo_heads": 64,
-        "num_kv_heads": 16,
-        "head_dim": 128,
-        "max_num_pages": 128,
-        "page_size": 16,
-        "prompt_len": 1024,
-        "backend": "fa2"
-    },
-    {
-        "batch_size": 7,
-        "num_layers": 1,
-        "num_qo_heads": 64,
-        "num_kv_heads": 16,
-        "head_dim": 128,
-        "max_num_pages": 128,
-        "page_size": 16,
-        "prompt_len": 1024,
-        "backend": "fa3"
-    }
-]
+all_params = {
+    "batch_size": [7],
+    "num_layers": [1],
+    "num_qo_heads": [128],
+    "num_kv_heads": [128],
+    "head_dim": [176],
+    "max_num_pages": [128],
+    "page_size": [16],
+    "prompt_len": [1024],
+    "backend": ["fa2", "fa3"]
+}
 
 if __name__ == "__main__":
 
     device = torch.device("cuda:0")
 
     flashinfer_mha = FlashinferMHAPrefill(device)
+
+    params_list = generate_params(all_params)
 
     for param in params_list:
         backend = param.get("backend", None)
