@@ -8,7 +8,7 @@ import logging
 
 import torch
 
-from mha.kernel_flashinfer_mha import FlashinferMHAPrefill
+from mha.kernel_trtllm_mha import TRTLLMMHAPrefill
 from test_utils import generate_params
 
 logging.basicConfig(level=logging.INFO)
@@ -22,23 +22,23 @@ all_params = {
     "max_num_pages": [128],
     "page_size": [16],
     "prompt_len": [1024],
-    "backend": ["fa2", "fa3"]
+    "max_context_len": [4096],
+    "tp": [1, 8]
 }
 
 if __name__ == "__main__":
 
     device = torch.device("cuda:0")
 
-    flashinfer_mha = FlashinferMHAPrefill(device)
+    flashinfer_mha = TRTLLMMHAPrefill(device)
 
     params_list = generate_params(all_params)
 
     for param in params_list:
-        backend = param.get("backend", None)
 
         flashinfer_mha.set_params(param)
         t = flashinfer_mha.profile_kernel_us()
 
         t_ms = t / 1000
 
-        logger.info(f"Flashinfer MHA Prefill with {backend} backend costs {t:.3f}ms")
+        logger.info(f"Flashinfer MHA Prefill with {param} costs {t:.3f}ms")

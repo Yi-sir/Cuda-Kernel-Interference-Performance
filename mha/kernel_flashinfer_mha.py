@@ -1,8 +1,6 @@
 import logging
 import os
-# import random
 import sys
-import time
 
 import torch
 import flashinfer
@@ -125,7 +123,7 @@ class FlashinferMHAPrefill(KernelBase):
         "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
-        "backend": "fa2"
+        "backend": "trtllm-gen"
     }
 
     _kernel_name = "flashinfer_mha_prefill"
@@ -141,7 +139,7 @@ class FlashinferMHAPrefill(KernelBase):
         super().__init__(device)
 
     def prepare_input(self):
-        def prepare(
+        def prepare_paged(
           batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, backend, device
         ):
             torch.set_default_device(device)
@@ -163,9 +161,9 @@ class FlashinferMHAPrefill(KernelBase):
             # query总长度
             nnz_qo = prompt_len * batch_size
 
-            # kv page长度累计
+            # kv page长度累计，递增
             paged_kv_indptr = _generate_random_partition(max_num_pages, batch_size)
-            # 足够大的buffer，只有启用cudagraph时生效
+            # 每个请求对应的kv indices，第i个请求持有paged_kv_indptr[i+1] - paged_kv_indptr[i]这些page
             paged_kv_indices = torch.arange(max_num_pages).to(torch.int32)
             # 最后一页的token数
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
@@ -193,12 +191,53 @@ class FlashinferMHAPrefill(KernelBase):
 
             return (q_at_layer, kv_cache_at_layer)
 
+        def prepare_ragged(
+            batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, backend, device
+        ):
+            torch.set_default_device(device)
+            torch.cuda.set_device(device)
+
+            torch.manual_seed(0)
+
+            self._key = self._backend_key_dict.get(backend, "")
+            logger.debug(f"backend is {backend}, key is {self._key}")
+
+
+            workspace_buffer = torch.zeros(WORKSPACE_BUFFER_SIZE, dtype=torch.uint8)
+            self.prefill_wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
+                workspace_buffer, "NHD", backend=backend
+            )
+
+            qo_indptr = torch.tensor([prompt_len * i for i in range(batch_size + 1)], dtype=torch.int32)
+            nnz_qo = prompt_len * batch_size
+            nnz_kv = nnz_qo
+
+            kv_indptr = qo_indptr.clone()
+
+            q_at_layer = torch.randn(num_layers, nnz_qo, num_qo_heads, head_dim).half()
+            k_at_layer = torch.randn(num_layers, nnz_kv, num_kv_heads, head_dim).half()
+            v_at_layer = torch.randn(num_layers, nnz_kv, num_kv_heads, head_dim).half()
+
+            self.prefill_wrapper.plan(
+                qo_indptr,
+                kv_indptr,
+                num_qo_heads,
+                num_kv_heads,
+                head_dim,
+                causal=True,
+            )
+
+            return (q_at_layer, k_at_layer, v_at_layer)
+
         logger.debug(f"Prepare input for {self.__class__._kernel_name} >>>>>")
         logger.debug(f"Params are {self.params}")
-        self.inputs = prepare(**self.params, device=self.device)
+        if self.params.get("backend", "") != "trtllm-gen":
+            self.inputs = prepare_paged(**self.params, device=self.device)
+        else:
+            self.inputs = prepare_ragged(**self.params, device=self.device)
 
     def launch_kernel(self):
-        def flashinfer_mha_prefill(
+        def flashinfer_mha_prefill_paged(
             q_at_layer,
             kv_cache_at_layer
         ):
@@ -209,7 +248,23 @@ class FlashinferMHAPrefill(KernelBase):
                 o = self.prefill_wrapper.run(q, kv_cache)
                 logger.debug(f"prefil_wrapper output' s shape is {o.shape}")
 
-        return flashinfer_mha_prefill(*self.inputs)
+        def flashinfer_mha_prefill_ragged(
+            q_at_layer,
+            k_at_layer,
+            v_at_layer
+        ):
+            num_layers = self.params["num_layers"]
+            for i in range(num_layers):
+                q = q_at_layer[i]
+                k = k_at_layer[i]
+                v = v_at_layer[i]
+                o = self.prefill_wrapper.run(q, k, v)
+                logger.debug(f"prefil_wrapper output' s shape is {o.shape}")
+
+        if self.params.get("backend", "") != "trtllm-gen":
+            return flashinfer_mha_prefill_paged(*self.inputs)
+        else:
+            return flashinfer_mha_prefill_ragged(*self.inputs)
 
 def test_flashinfer_mha_decode():
     device = torch.device("cuda:0")
