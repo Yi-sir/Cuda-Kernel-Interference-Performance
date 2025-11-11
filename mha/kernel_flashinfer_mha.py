@@ -40,6 +40,7 @@ class FlashinferMHADecode(KernelBase):
         "head_dim": 128,
         "max_num_pages": 128,
         "page_size": 16,
+        "tp": 1
     }
 
     _kernel_name = "flashinfer_mha_decode"
@@ -50,8 +51,9 @@ class FlashinferMHADecode(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, device
+            batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, tp, device
         ):
+            assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
 
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -62,6 +64,10 @@ class FlashinferMHADecode(KernelBase):
             self.decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
                 self.workspace_buffer, "NHD"
             )
+
+            tp_q_head_num = num_qo_heads // tp
+            tp_kv_head_num = num_kv_heads // tp
+
             kv_page_indices = torch.arange(max_num_pages).int()
             kv_page_indptr = _generate_random_partition(max_num_pages, batch_size)
 
@@ -69,7 +75,7 @@ class FlashinferMHADecode(KernelBase):
 
             kv_cache_at_layer = [
                 torch.randn(
-                    max_num_pages, 2, page_size, num_kv_heads, head_dim, dtype=torch.float16
+                    max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
                 ) for _ in range(num_layers)
             ]
 
@@ -77,15 +83,15 @@ class FlashinferMHADecode(KernelBase):
                 kv_page_indptr,
                 kv_page_indices,
                 kv_last_page_len,
-                num_qo_heads,
-                num_kv_heads,
+                tp_q_head_num,
+                tp_kv_head_num,
                 head_dim,
                 page_size,
                 pos_encoding_mode="NONE",
                 data_type=torch.float16
             )
 
-            qs = [torch.randn(batch_size, num_qo_heads, head_dim).half() for _ in range(num_layers)]
+            qs = [torch.randn(batch_size, tp_q_head_num, head_dim).half() for _ in range(num_layers)]
 
             return (
                 qs,
@@ -123,6 +129,7 @@ class FlashinferMHAPrefill(KernelBase):
         "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
+        "tp": 1,
         "backend": "trtllm-gen"
     }
 
@@ -140,8 +147,10 @@ class FlashinferMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare_paged(
-          batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, backend, device
+          batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, tp, backend, device
         ):
+            assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
+
             torch.set_default_device(device)
             torch.cuda.set_device(device)
 
@@ -161,16 +170,19 @@ class FlashinferMHAPrefill(KernelBase):
             # query总长度
             nnz_qo = prompt_len * batch_size
 
+            tp_q_head_num = num_qo_heads // tp
+            tp_kv_head_num = num_kv_heads // tp
+
             # kv page长度累计，递增
             paged_kv_indptr = _generate_random_partition(max_num_pages, batch_size)
             # 每个请求对应的kv indices，第i个请求持有paged_kv_indptr[i+1] - paged_kv_indptr[i]这些page
             paged_kv_indices = torch.arange(max_num_pages).to(torch.int32)
             # 最后一页的token数
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
-            q_at_layer = torch.randn(num_layers, nnz_qo, num_qo_heads, head_dim).half()
+            q_at_layer = torch.randn(num_layers, nnz_qo, tp_q_head_num, head_dim).half()
 
             kv_cache_at_layer = torch.randn(
-                num_layers, max_num_pages, 2, page_size, num_kv_heads, head_dim, dtype=torch.float16
+                num_layers, max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
             )
 
             # max_token_per_sequance = prompt_len
@@ -182,8 +194,8 @@ class FlashinferMHAPrefill(KernelBase):
                 paged_kv_indptr,
                 paged_kv_indices,
                 paged_kv_last_page_len,
-                num_qo_heads,
-                num_kv_heads,
+                tp_q_head_num,
+                tp_kv_head_num,
                 head_dim,
                 page_size,
                 causal=True,

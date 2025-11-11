@@ -22,6 +22,7 @@ all_params = {
     "max_num_pages": [128],
     "page_size": [16],
     "prompt_len": [1024],
+    "tp": [1, 8],
     "backend": ["fa2", "fa3"]
 }
 
