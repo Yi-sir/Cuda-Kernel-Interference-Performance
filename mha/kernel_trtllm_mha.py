@@ -67,8 +67,8 @@ class TRTLLMMHAPrefill(KernelBase):
             query = torch.randn(num_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
 
             total_tokens = max_num_pages * page_size
-            k_cache = torch.randn(total_tokens + page_size, num_kv_heads, head_dim, dtype=torch.float16)
-            v_cache = torch.randn(total_tokens + page_size, num_kv_heads, head_dim, dtype=torch.float16)
+            k_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
+            v_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
 
             # [num_pages, head_num, page_size, head_dim]
             k_cache = k_cache.view(-1, page_size, tp_kv_head_num, head_dim).permute(0, 2, 1, 3)
