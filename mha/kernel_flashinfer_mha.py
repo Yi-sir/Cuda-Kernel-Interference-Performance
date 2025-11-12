@@ -121,16 +121,17 @@ class FlashinferMHADecode(KernelBase):
 class FlashinferMHAPrefill(KernelBase):
 
     _default_params = {
-        "batch_size": 7,
+        "batch_size": 8,
         "num_layers": 1,
         "num_qo_heads": 64,
-        "num_kv_heads": 16,
+        "num_kv_heads": 64,
         "head_dim": 128,
         "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
+        "cached_len": 256,
         "tp": 1,
-        "backend": "trtllm-gen"
+        "backend": "fa3"
     }
 
     _kernel_name = "flashinfer_mha_prefill"
@@ -139,7 +140,6 @@ class FlashinferMHAPrefill(KernelBase):
     _backend_key_dict = {
         "fa2": "void flashinfer::BatchPrefillWithPagedKVCacheKernel",
         "fa3": "void flashinfer::PrefillWithKVCacheKernel",
-        # "cudnn": ""
     }
 
     def __init__(self, device: torch.device):
@@ -147,7 +147,7 @@ class FlashinferMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare_paged(
-          batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, tp, backend, device
+          batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, cached_len, tp, backend, device
         ):
             assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
 
@@ -164,30 +164,26 @@ class FlashinferMHAPrefill(KernelBase):
                 workspace_buffer, "NHD", backend=backend
             )
 
-            # query长度累计
-            qo_indptr = torch.tensor([prompt_len * i for i in range(batch_size + 1)], dtype=torch.int32)
+            new_token_len = prompt_len - cached_len
 
-            # query总长度
-            nnz_qo = prompt_len * batch_size
+            total_tokens = prompt_len * batch_size
+            total_new_tokens = new_token_len * batch_size
+            total_cached_tokens = cached_len * batch_size
+
+            qo_indptr = torch.tensor([new_token_len * i for i in range(batch_size + 1)], dtype=torch.int32)
 
             tp_q_head_num = num_qo_heads // tp
             tp_kv_head_num = num_kv_heads // tp
 
-            # kv page长度累计，递增
-            paged_kv_indptr = _generate_random_partition(max_num_pages, batch_size)
-            # 每个请求对应的kv indices，第i个请求持有paged_kv_indptr[i+1] - paged_kv_indptr[i]这些page
-            paged_kv_indices = torch.arange(max_num_pages).to(torch.int32)
-            # 最后一页的token数
+            paged_kv_indptr = torch.tensor([cached_len * i for i in range(batch_size + 1)]).int()
+            paged_kv_indices = torch.randint(low=0, high=max_num_pages, size=(total_cached_tokens,)).int()
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
-            q_at_layer = torch.randn(num_layers, nnz_qo, tp_q_head_num, head_dim).half()
+
+            q_at_layer = torch.randn(num_layers, total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
 
             kv_cache_at_layer = torch.randn(
                 num_layers, max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
             )
-
-            # max_token_per_sequance = prompt_len
-            # max_sequence_kv = max_num_pages * page_size
-            # seq_lens = torch.tensor([prompt_len] * batch_size).to(torch.int32)
 
             self.prefill_wrapper.plan(
                 qo_indptr,
