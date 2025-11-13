@@ -19,7 +19,7 @@ all_params = {
     "prompt_len": [1024],
     "cached_len": [256],
     "q_head_num": [128],      # ds-v3.1-terminus
-    "kv_head_num": [1],       # ds-v3.1-terminus
+    "kv_head_num": [1, 128],  # ds-v3.1-terminus, 1 for mla, 128 for mha
     "qk_head_dim": [576],     # ds-v3.1-terminus
     "v_head_dim": [512],      # ds-v3.1-terminus
     "page_size": [1],
@@ -29,7 +29,7 @@ all_params = {
 
 if __name__ == "__main__":
 
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:2")
 
     k = TritonMHAPrefill(device)
 

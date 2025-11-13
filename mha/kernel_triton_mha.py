@@ -45,7 +45,8 @@ class TritonMHAPrefill(KernelBase):
         def prepare(
             batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, max_num_pages, tp, device
         ):
-            assert q_head_num % tp == 0 and kv_head_num % tp == 0
+            assert q_head_num % tp == 0 or q_head_num == 1
+            assert kv_head_num % tp == 0 or kv_head_num == 1
             assert cached_len < prompt_len
             assert cached_len >= 0
 
@@ -54,8 +55,8 @@ class TritonMHAPrefill(KernelBase):
 
             torch.manual_seed(0)
 
-            tp_q_head_num = q_head_num // tp
-            tp_kv_head_num = kv_head_num // tp
+            tp_q_head_num = max(q_head_num // tp, 1)
+            tp_kv_head_num = max(kv_head_num // tp, 1)
 
             new_token_len = prompt_len - cached_len
 
@@ -74,7 +75,7 @@ class TritonMHAPrefill(KernelBase):
 
             qo_indptr = torch.tensor([new_token_len * i for i in range(batch_size + 1)])
             kv_indptr = torch.tensor([cached_len * i for i in range(batch_size + 1)])
-            kv_indices = torch.randint(low=0, high=total_tokens+page_size, size=(batch_size, prompt_len))
+            kv_indices = torch.randint(low=0, high=total_tokens+page_size, size=(total_cached_tokens,))
 
             return (
                 q.view(-1, tp_q_head_num, qk_head_dim),
