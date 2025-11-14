@@ -175,8 +175,8 @@ class FlashinferMHAPrefill(KernelBase):
             tp_q_head_num = num_qo_heads // tp
             tp_kv_head_num = num_kv_heads // tp
 
-            paged_kv_indptr = torch.tensor([cached_len * i for i in range(batch_size + 1)]).int()
-            paged_kv_indices = torch.randint(low=0, high=max_num_pages, size=(total_cached_tokens,)).int()
+            paged_kv_indptr = torch.tensor([prompt_len * i for i in range(batch_size + 1)]).int()
+            paged_kv_indices = torch.randint(low=0, high=max_num_pages, size=(total_tokens,)).int()
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
 
             q_at_layer = torch.randn(num_layers, total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
@@ -316,10 +316,10 @@ def test_flashinfer_mha_prefill():
         k.launch_kernel()
 
     events = prof.key_averages()
-    for evt in events:
-        print(
-            f"event.device_type: {evt.device_type}, device_time: {evt.device_time}"
-        )
+    # for evt in events:
+    #     print(
+    #         f"event.device_type: {evt.device_type}, device_time: {evt.device_time}"
+    #     )
     print(events.table(sort_by="cuda_time_total", row_limit=10,))
 
 if __name__ == "__main__":
