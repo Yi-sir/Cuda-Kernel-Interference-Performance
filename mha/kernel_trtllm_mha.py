@@ -25,13 +25,14 @@ def is_sm100_supported(device: torch.device) -> bool:
 class TRTLLMMHAPrefill(KernelBase):
 
     _default_params = {
-        "batch_size": 7,
+        "batch_size": 8,
         "num_qo_heads": 64,
         "num_kv_heads": 64,
         "head_dim": 128,
         "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
+        "cached_len": 256,
         "max_context_len": 4096,
         "tp": 1
     }
@@ -44,7 +45,7 @@ class TRTLLMMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, max_context_len, tp, device
+            batch_size, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, cached_len, max_context_len, tp, device
         ):
             assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
 
@@ -56,6 +57,11 @@ class TRTLLMMHAPrefill(KernelBase):
             workspace_buffer = torch.zeros(WORKSPACE_BUFFER_SIZE, dtype=torch.uint8)
 
             num_tokens = prompt_len * batch_size
+
+            new_token_len = prompt_len - cached_len
+            total_new_tokens = batch_size * new_token_len
+            total_cached_tokens = batch_size * cached_len
+
             seq_lens = torch.tensor([prompt_len] * batch_size)
 
             cum_seq_lens_q = torch.tensor([prompt_len * i for i in range(batch_size + 1)])
@@ -64,7 +70,7 @@ class TRTLLMMHAPrefill(KernelBase):
             tp_q_head_num = num_qo_heads // tp
             tp_kv_head_num = num_kv_heads // tp
 
-            query = torch.randn(num_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
+            query = torch.randn(total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
 
             total_tokens = max_num_pages * page_size
             k_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
