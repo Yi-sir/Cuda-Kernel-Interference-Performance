@@ -35,8 +35,8 @@ class FlashinferMHADecode(KernelBase):
     _default_params = {
         "batch_size": 7,
         "num_layers": 1,
-        "num_qo_heads": 64,
-        "num_kv_heads": 8,
+        "q_head_num": 64,
+        "kv_head_num": 8,
         "head_dim": 128,
         "max_num_pages": 128,
         "page_size": 16,
@@ -51,9 +51,9 @@ class FlashinferMHADecode(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, tp, device
+            batch_size, num_layers, q_head_num, kv_head_num, head_dim, max_num_pages, page_size, tp, device
         ):
-            assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
+            assert q_head_num % tp == 0 and kv_head_num % tp == 0
 
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -65,8 +65,8 @@ class FlashinferMHADecode(KernelBase):
                 self.workspace_buffer, "NHD"
             )
 
-            tp_q_head_num = num_qo_heads // tp
-            tp_kv_head_num = num_kv_heads // tp
+            tp_q_head_num = q_head_num // tp
+            tp_kv_head_num = kv_head_num // tp
 
             kv_page_indices = torch.arange(max_num_pages).int()
             kv_page_indptr = _generate_random_partition(max_num_pages, batch_size)
@@ -122,11 +122,9 @@ class FlashinferMHAPrefill(KernelBase):
 
     _default_params = {
         "batch_size": 8,
-        "num_layers": 1,
-        "num_qo_heads": 64,
-        "num_kv_heads": 64,
+        "q_head_num": 64,
+        "kv_head_num": 64,
         "head_dim": 128,
-        "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
         "cached_len": 256,
@@ -144,12 +142,13 @@ class FlashinferMHAPrefill(KernelBase):
 
     def __init__(self, device: torch.device):
         super().__init__(device)
+        self.num_layers = 1
 
     def prepare_input(self):
         def prepare_paged(
-          batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, cached_len, tp, backend, device
+          batch_size, q_head_num, kv_head_num, head_dim, page_size, prompt_len, cached_len, tp, backend, device
         ):
-            assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
+            assert q_head_num % tp == 0 and kv_head_num % tp == 0
 
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -172,17 +171,19 @@ class FlashinferMHAPrefill(KernelBase):
 
             qo_indptr = torch.tensor([new_token_len * i for i in range(batch_size + 1)], dtype=torch.int32)
 
-            tp_q_head_num = num_qo_heads // tp
-            tp_kv_head_num = num_kv_heads // tp
+            tp_q_head_num = q_head_num // tp
+            tp_kv_head_num = kv_head_num // tp
+
+            max_num_pages = batch_size * prompt_len * 2 // page_size
 
             paged_kv_indptr = torch.tensor([prompt_len * i for i in range(batch_size + 1)]).int()
             paged_kv_indices = torch.randint(low=0, high=max_num_pages, size=(total_tokens,)).int()
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
 
-            q_at_layer = torch.randn(num_layers, total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
+            q_at_layer = torch.randn(self.num_layers, total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
 
             kv_cache_at_layer = torch.randn(
-                num_layers, max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
+                self.num_layers, max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
             )
 
             self.prefill_wrapper.plan(
@@ -200,7 +201,7 @@ class FlashinferMHAPrefill(KernelBase):
             return (q_at_layer, kv_cache_at_layer)
 
         def prepare_ragged(
-            batch_size, num_layers, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, backend, device
+            batch_size, num_layers, q_head_num, kv_head_num, head_dim, max_num_pages, page_size, prompt_len, backend, device
         ):
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -222,15 +223,15 @@ class FlashinferMHAPrefill(KernelBase):
 
             kv_indptr = qo_indptr.clone()
 
-            q_at_layer = torch.randn(num_layers, nnz_qo, num_qo_heads, head_dim).half()
-            k_at_layer = torch.randn(num_layers, nnz_kv, num_kv_heads, head_dim).half()
-            v_at_layer = torch.randn(num_layers, nnz_kv, num_kv_heads, head_dim).half()
+            q_at_layer = torch.randn(num_layers, nnz_qo, q_head_num, head_dim).half()
+            k_at_layer = torch.randn(num_layers, nnz_kv, kv_head_num, head_dim).half()
+            v_at_layer = torch.randn(num_layers, nnz_kv, kv_head_num, head_dim).half()
 
             self.prefill_wrapper.plan(
                 qo_indptr,
                 kv_indptr,
-                num_qo_heads,
-                num_kv_heads,
+                q_head_num,
+                kv_head_num,
                 head_dim,
                 causal=True,
             )
@@ -249,8 +250,7 @@ class FlashinferMHAPrefill(KernelBase):
             q_at_layer,
             kv_cache_at_layer
         ):
-            num_layers = self.params["num_layers"]
-            for i in range(num_layers):
+            for i in range(self.num_layers):
                 q = q_at_layer[i]
                 kv_cache = kv_cache_at_layer[i]
                 o = self.prefill_wrapper.run(q, kv_cache)

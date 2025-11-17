@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 all_params = {
     "batch_size": [8],
-    "num_qo_heads": [64],
-    "num_kv_heads": [64],
+    "q_head_num": [64],
+    "kv_head_num": [64],
     "head_dim": [128],
-    "max_num_pages": [128],
     "page_size": [16],
     "prompt_len": [1024],
     "cached_len": [256],

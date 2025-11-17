@@ -26,10 +26,9 @@ class TRTLLMMHAPrefill(KernelBase):
 
     _default_params = {
         "batch_size": 8,
-        "num_qo_heads": 64,
-        "num_kv_heads": 64,
+        "q_head_num": 64,
+        "kv_head_num": 64,
         "head_dim": 128,
-        "max_num_pages": 128,
         "page_size": 16,
         "prompt_len": 1024,
         "cached_len": 256,
@@ -45,9 +44,9 @@ class TRTLLMMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, num_qo_heads, num_kv_heads, head_dim, max_num_pages, page_size, prompt_len, cached_len, max_context_len, tp, device
+            batch_size, q_head_num, kv_head_num, head_dim, page_size, prompt_len, cached_len, max_context_len, tp, device
         ):
-            assert num_qo_heads % tp == 0 and num_kv_heads % tp == 0
+            assert q_head_num % tp == 0 and kv_head_num % tp == 0
 
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -55,8 +54,6 @@ class TRTLLMMHAPrefill(KernelBase):
             torch.manual_seed(0)
 
             workspace_buffer = torch.zeros(WORKSPACE_BUFFER_SIZE, dtype=torch.uint8)
-
-            num_tokens = prompt_len * batch_size
 
             new_token_len = prompt_len - cached_len
             total_new_tokens = batch_size * new_token_len
@@ -67,12 +64,12 @@ class TRTLLMMHAPrefill(KernelBase):
             cum_seq_lens_q = torch.tensor([prompt_len * i for i in range(batch_size + 1)])
             cum_seq_lens_kv = cum_seq_lens_q.clone()
 
-            tp_q_head_num = num_qo_heads // tp
-            tp_kv_head_num = num_kv_heads // tp
+            tp_q_head_num = q_head_num // tp
+            tp_kv_head_num = kv_head_num // tp
 
             query = torch.randn(total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
 
-            total_tokens = max_num_pages * page_size
+            total_tokens = batch_size * prompt_len * 2
             k_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
             v_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
 
@@ -82,9 +79,6 @@ class TRTLLMMHAPrefill(KernelBase):
 
             kv_cache = (k_cache, v_cache)
 
-            # sglang的调用里，block_tables取自req_to_token_pool[indices, :max_seq_len_k]
-            # 值域 [0, total_tokens]
-            # 这里需要调成page_size个递增的吗，只跑性能好像无所谓
             block_tables = torch.randint(low=0, high=total_tokens+page_size, size=(batch_size, prompt_len))
 
             if page_size > 1:

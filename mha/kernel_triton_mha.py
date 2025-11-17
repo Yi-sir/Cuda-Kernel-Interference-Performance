@@ -30,7 +30,6 @@ class TritonMHAPrefill(KernelBase):
         "qk_head_dim": 576,
         "v_head_dim": 512,
         "page_size": 1,
-        "max_num_pages": 128,
         "tp": 1
     }
 
@@ -43,7 +42,7 @@ class TritonMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, max_num_pages, tp, device
+            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, tp, device
         ):
             assert q_head_num % tp == 0 or q_head_num == 1
             assert kv_head_num % tp == 0 or kv_head_num == 1
@@ -60,7 +59,7 @@ class TritonMHAPrefill(KernelBase):
 
             new_token_len = prompt_len - cached_len
 
-            total_tokens = max_num_pages * page_size
+            total_tokens = batch_size * prompt_len * 2
             total_new_tokens = batch_size * new_token_len
             total_cached_tokens = batch_size * cached_len
 

@@ -23,7 +23,6 @@ all_params = {
     "qk_head_dim": [576],     # ds-v3.1-terminus
     "v_head_dim": [512],      # ds-v3.1-terminus
     "page_size": [1],
-    "max_num_pages": [128],
     "tp": [1, 8]
 }
 
