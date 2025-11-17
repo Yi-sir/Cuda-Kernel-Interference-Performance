@@ -40,4 +40,4 @@ if __name__ == "__main__":
 
         t_ms = t / 1000
 
-        logger.info(f"Flashinfer MHA Prefill with {param} costs {t:.3f}ms")
+        logger.info(f"Flashinfer MHA Prefill with {param} costs {t_ms:.3f}ms")
