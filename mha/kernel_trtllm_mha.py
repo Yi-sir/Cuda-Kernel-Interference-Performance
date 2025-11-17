@@ -28,7 +28,8 @@ class TRTLLMMHAPrefill(KernelBase):
         "batch_size": 8,
         "q_head_num": 64,
         "kv_head_num": 64,
-        "head_dim": 128,
+        "qk_head_dim": 576,
+        "v_head_dim": 512,
         "page_size": 16,
         "prompt_len": 1024,
         "cached_len": 256,
@@ -44,7 +45,7 @@ class TRTLLMMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, q_head_num, kv_head_num, head_dim, page_size, prompt_len, cached_len, max_context_len, tp, device
+            batch_size, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, prompt_len, cached_len, max_context_len, tp, device
         ):
             assert q_head_num % tp == 0 and kv_head_num % tp == 0
 
@@ -67,15 +68,15 @@ class TRTLLMMHAPrefill(KernelBase):
             tp_q_head_num = q_head_num // tp
             tp_kv_head_num = kv_head_num // tp
 
-            query = torch.randn(total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
+            query = torch.randn(total_new_tokens, tp_q_head_num, qk_head_dim, dtype=torch.float16)
 
             total_tokens = batch_size * prompt_len * 2
-            k_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
-            v_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, head_dim, dtype=torch.float16)
+            k_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, qk_head_dim, dtype=torch.float16)
+            v_cache = torch.randn(total_tokens + page_size, tp_kv_head_num, v_head_dim, dtype=torch.float16)
 
             # [num_pages, head_num, page_size, head_dim]
-            k_cache = k_cache.view(-1, page_size, tp_kv_head_num, head_dim).permute(0, 2, 1, 3)
-            v_cache = v_cache.view(-1, page_size, tp_kv_head_num, head_dim).permute(0, 2, 1, 3)
+            k_cache = k_cache.view(-1, page_size, tp_kv_head_num, qk_head_dim).permute(0, 2, 1, 3)
+            v_cache = v_cache.view(-1, page_size, tp_kv_head_num, v_head_dim).permute(0, 2, 1, 3)
 
             kv_cache = (k_cache, v_cache)
 
