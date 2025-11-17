@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @register_kernel
-class FA3MHAPrefill(KernelBase):
+class FA3Prefill(KernelBase):
 
     _default_params = {
         "batch_size": 8,
@@ -29,11 +29,11 @@ class FA3MHAPrefill(KernelBase):
         "page_size": 1,
         "max_num_pages": 128,
         "tp": 1,
-        "attn_type": "mha"
+        "attn_type": "mla"
     }
 
     _kernel_name = "fa3_mha_prefill"
-    _key = ""
+    _key = "void cutlass::device_kernel"
 
     def __init__(self, device):
         super().__init__(device)
@@ -74,7 +74,7 @@ class FA3MHAPrefill(KernelBase):
                 v = torch.randn(total_tokens, 1, tp_kv_head_num, v_head_dim, dtype=torch.bfloat16)
                 qv = None
 
-            page_table = torch.randint(low=0, high=total_tokens, size=(total_new_tokens + total_cached_tokens,), dtype=torch.int32)
+            page_table = torch.randint(low=0, high=total_tokens, size=(batch_size, new_token_len + cached_len,), dtype=torch.int32)
             cache_seqlens = torch.tensor([prompt_len for _ in range(batch_size)], dtype=torch.int32)
 
             cu_seqlens_q = torch.tensor([new_token_len * i for i in range(batch_size + 1)], dtype=torch.int32)
@@ -127,29 +127,25 @@ class FA3MHAPrefill(KernelBase):
             v_descale,
             num_splits
         ):
-            try:
-                result = flash_attn_with_kvcache(
-                        q=q,
-                        k_cache=k,
-                        v_cache=v,
-                        qv=qv,
-                        page_table=page_table,
-                        cache_seqlens=cache_seqlens,
-                        cu_seqlens_q=cu_seqlens_q,
-                        cu_seqlens_k_new=cu_seqlens_k,
-                        max_seqlen_q=max_seqlen_q,
-                        softmax_scale=layer_scaling,
-                        causal=causal,
-                        softcap=layer_logit_cap,
-                        k_descale=k_descale,
-                        v_descale=v_descale,
-                        return_softmax_lse=False,
-                        num_splits=num_splits,
-                    )
-                logger.debug(f"fa3 prefill output' s shape is {result.shape}")
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
+            result = flash_attn_with_kvcache(
+                    q=q,
+                    k_cache=k,
+                    v_cache=v,
+                    qv=qv,
+                    page_table=page_table,
+                    cache_seqlens=cache_seqlens,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k_new=cu_seqlens_k,
+                    max_seqlen_q=max_seqlen_q,
+                    softmax_scale=layer_scaling,
+                    causal=causal,
+                    softcap=layer_logit_cap,
+                    k_descale=k_descale,
+                    v_descale=v_descale,
+                    return_softmax_lse=False,
+                    num_splits=num_splits,
+                )
+            logger.debug(f"fa3 prefill output' s shape is {result.shape}")
 
         return fa3_mha_prefill(*self.inputs)
 
@@ -157,7 +153,7 @@ def test_fa3_mha_prefill():
     device = torch.device("cuda:3")
 
     logger.setLevel(logging.DEBUG)
-    k = FA3MHAPrefill(device)
+    k = FA3Prefill(device)
     k.prepare_input()
 
     with torch.profiler.profile(
