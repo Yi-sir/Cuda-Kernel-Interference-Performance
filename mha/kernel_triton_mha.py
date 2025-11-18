@@ -25,12 +25,15 @@ class TritonMHAPrefill(KernelBase):
         "batch_size": 8,
         "prompt_len": 1024,
         "cached_len": 256,
-        "q_head_num": 64,
-        "kv_head_num": 1,
-        "qk_head_dim": 576,
+        "q_head_num": 128,
+        "kv_head_num": 128,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "kv_lora_rank": 512,
         "v_head_dim": 512,
         "page_size": 1,
-        "tp": 1
+        "tp": 1,
+        "attn_type": "mha"
     }
 
     _kernel_name = "triton_mha_prefill"
@@ -42,7 +45,7 @@ class TritonMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, tp, device
+            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_nope_head_dim, qk_rope_head_dim, kv_lora_rank, v_head_dim, page_size, tp, attn_type, device
         ):
             assert q_head_num % tp == 0 or q_head_num == 1
             assert kv_head_num % tp == 0 or kv_head_num == 1
@@ -53,6 +56,12 @@ class TritonMHAPrefill(KernelBase):
             torch.cuda.set_device(device)
 
             torch.manual_seed(0)
+
+            if attn_type == "mla":
+                qk_head_dim = kv_lora_rank + qk_rope_head_dim
+                kv_head_num = 1
+            elif attn_type == "mha":
+                qk_head_dim = qk_rope_head_dim + qk_nope_head_dim
 
             tp_q_head_num = max(q_head_num // tp, 1)
             tp_kv_head_num = max(kv_head_num // tp, 1)
