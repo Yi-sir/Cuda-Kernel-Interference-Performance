@@ -30,7 +30,7 @@ class TritonMHAPrefill(KernelBase):
         "qk_nope_head_dim": 128,
         "qk_rope_head_dim": 64,
         "kv_lora_rank": 512,
-        "v_head_dim": 512,
+        "v_head_dim": 128,
         "page_size": 1,
         "tp": 1,
         "attn_type": "mha"
@@ -59,6 +59,7 @@ class TritonMHAPrefill(KernelBase):
 
             if attn_type == "mla":
                 qk_head_dim = kv_lora_rank + qk_rope_head_dim
+                v_head_dim = kv_lora_rank
                 kv_head_num = 1
             elif attn_type == "mha":
                 qk_head_dim = qk_rope_head_dim + qk_nope_head_dim
@@ -126,6 +127,7 @@ class TritonMHAPrefill(KernelBase):
             )
 
             logger.debug(f"triton prefill output' s shape is {o.shape}")
+            return o
 
         return triton_mha_prefill(*self.inputs)
 

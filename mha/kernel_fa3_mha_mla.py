@@ -22,13 +22,15 @@ class FA3Prefill(KernelBase):
         "batch_size": 8,
         "prompt_len": 1024,
         "cached_len": 256,
-        "q_head_num": 64,
-        "kv_head_num": 1,
-        "qk_head_dim": 576,
-        "v_head_dim": 512,
-        "page_size": 1,
+        "q_head_num": 128,
+        "kv_head_num": 128,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "kv_lora_rank": 512,
+        "v_head_dim": 128,
+        "page_size": 16,
         "tp": 1,
-        "attn_type": "mla"
+        "attn_type": "mha"
     }
 
     _kernel_name = "fa3_mha_prefill"
@@ -39,7 +41,7 @@ class FA3Prefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, tp, attn_type, device
+            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_nope_head_dim, qk_rope_head_dim, kv_lora_rank, v_head_dim, page_size, tp, attn_type, device
         ):
             assert q_head_num % tp == 0 or q_head_num == 1
             assert kv_head_num % tp == 0 or kv_head_num == 1
@@ -51,7 +53,7 @@ class FA3Prefill(KernelBase):
 
             torch.manual_seed(0)
 
-            kv_head_num = kv_head_num if attn_type == "mla" else q_head_num
+            kv_head_num = 1 if attn_type == "mla" else q_head_num
 
             tp_q_head_num = max(q_head_num // tp, 1)
             tp_kv_head_num = max(kv_head_num // tp, 1)
@@ -63,17 +65,24 @@ class FA3Prefill(KernelBase):
             total_cached_tokens = batch_size * cached_len
 
             if attn_type == "mla":
+                qk_head_dim = kv_lora_rank + qk_rope_head_dim
+                v_head_dim = kv_lora_rank
                 q = torch.randn(total_new_tokens, tp_q_head_num, qk_head_dim - v_head_dim, dtype=torch.bfloat16)
                 k = torch.randn(total_tokens, 1, tp_kv_head_num, qk_head_dim - v_head_dim, dtype=torch.bfloat16)
                 v = torch.randn(total_tokens, 1, tp_kv_head_num, v_head_dim, dtype=torch.bfloat16)
                 qv = torch.randn(total_new_tokens, tp_q_head_num, v_head_dim, dtype=torch.bfloat16)
             else:
+                qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
                 q = torch.randn(total_new_tokens, tp_q_head_num, qk_head_dim, dtype=torch.bfloat16)
                 k = torch.randn(total_tokens, 1, tp_kv_head_num, qk_head_dim, dtype=torch.bfloat16)
                 v = torch.randn(total_tokens, 1, tp_kv_head_num, v_head_dim, dtype=torch.bfloat16)
                 qv = None
 
             page_table = torch.randint(low=0, high=total_tokens, size=(batch_size, new_token_len + cached_len,), dtype=torch.int32)
+            if page_size > 1:
+                strided_indices = torch.arange(0, page_table.shape[1], page_size)
+                page_table = page_table[:, strided_indices] // page_size
+
             cache_seqlens = torch.tensor([prompt_len for _ in range(batch_size)], dtype=torch.int32)
 
             cu_seqlens_q = torch.tensor([new_token_len * i for i in range(batch_size + 1)], dtype=torch.int32)
@@ -145,6 +154,7 @@ class FA3Prefill(KernelBase):
                     num_splits=num_splits,
                 )
             logger.debug(f"fa3 prefill output' s shape is {result.shape}")
+            return result
 
         return fa3_mha_prefill(*self.inputs)
 
