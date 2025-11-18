@@ -26,16 +26,15 @@ class KernelBase(ABC):
         return list(cls._default_params.keys())
 
     def set_params(self, params: Dict[str, Any]):
-        p = params.copy()
-        for key in p:
+        unsupported_params = []
+        for key, value in params.items():
             if key not in self.__class__._default_params:
-                logger.warning(f"Unsupported param {key} for {str(self.__calss__)}, will be skipped.")
-                p.pop(key)
-                # raise ValueError(
-                #     f"Invalid param '{key}'. Valid params: {self.get_param_list()}"
-                # )
-        self.params.update(p)
+                logger.warning_once(f"Unsupported param {key} for {str(self.__class__)}, will be skipped.")
+                unsupported_params.append(key)
+            else:
+                self.params[key] = value
         self.prepare_input()
+        return unsupported_params
 
     @abstractmethod
     def prepare_input(self):
@@ -50,7 +49,7 @@ class KernelBase(ABC):
         stream: Optional[torch.cuda.Stream] = None,
         repeat=10,
         show_table=False,
-        skip_warmup=False,
+        skip_warmup=False
     ) -> float:
         assert self.inputs is not None, "Please initialize inputs first!"
         assert repeat > 0 and isinstance(repeat, int), "repeat must be an integer"

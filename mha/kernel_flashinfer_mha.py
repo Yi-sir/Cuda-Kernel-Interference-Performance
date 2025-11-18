@@ -122,12 +122,15 @@ class FlashinferMHAPrefill(KernelBase):
 
     _default_params = {
         "batch_size": 8,
-        "q_head_num": 64,
-        "kv_head_num": 64,
-        "head_dim": 128,
-        "page_size": 16,
         "prompt_len": 1024,
         "cached_len": 256,
+        "q_head_num": 128,
+        "kv_head_num": 128,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "kv_lora_rank": 512,
+        "v_head_dim": 128,
+        "page_size": 16,
         "tp": 1,
         "backend": "fa3"
     }
@@ -146,9 +149,12 @@ class FlashinferMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare_paged(
-          batch_size, q_head_num, kv_head_num, head_dim, page_size, prompt_len, cached_len, tp, backend, device
+          batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_nope_head_dim, qk_rope_head_dim, kv_lora_rank, page_size, v_head_dim, tp, backend, device
         ):
-            assert q_head_num % tp == 0 and kv_head_num % tp == 0
+            assert q_head_num % tp == 0 or q_head_num == 1
+            assert kv_head_num % tp == 0 or kv_head_num == 1
+            assert cached_len < prompt_len
+            assert cached_len >= 0
 
             torch.set_default_device(device)
             torch.cuda.set_device(device)
@@ -169,6 +175,8 @@ class FlashinferMHAPrefill(KernelBase):
             total_new_tokens = new_token_len * batch_size
             total_cached_tokens = cached_len * batch_size
 
+            qk_head_dim = qk_rope_head_dim + qk_nope_head_dim
+
             qo_indptr = torch.tensor([new_token_len * i for i in range(batch_size + 1)], dtype=torch.int32)
 
             tp_q_head_num = q_head_num // tp
@@ -180,11 +188,15 @@ class FlashinferMHAPrefill(KernelBase):
             paged_kv_indices = torch.randint(low=0, high=max_num_pages, size=(total_tokens,)).int()
             paged_kv_last_page_len = _generate_random_page_len(page_size, batch_size)
 
-            q_at_layer = torch.randn(self.num_layers, total_new_tokens, tp_q_head_num, head_dim, dtype=torch.float16)
+            q_at_layer = torch.randn(self.num_layers, total_new_tokens, tp_q_head_num, qk_head_dim, dtype=torch.float16)
 
-            kv_cache_at_layer = torch.randn(
-                self.num_layers, max_num_pages, 2, page_size, tp_kv_head_num, head_dim, dtype=torch.float16
+            k_cache_at_layer = torch.randn(
+                self.num_layers, max_num_pages, page_size, tp_kv_head_num, qk_head_dim, dtype=torch.float16
             )
+            v_cache_at_layer = torch.randn(
+                self.num_layers, max_num_pages, page_size, tp_kv_head_num, v_head_dim, dtype=torch.float16
+            )
+            kv_cache_at_layer = (k_cache_at_layer, v_cache_at_layer)
 
             self.prefill_wrapper.plan(
                 qo_indptr,
@@ -193,7 +205,7 @@ class FlashinferMHAPrefill(KernelBase):
                 paged_kv_last_page_len,
                 tp_q_head_num,
                 tp_kv_head_num,
-                head_dim,
+                v_head_dim,
                 page_size,
                 causal=True,
             )
@@ -252,7 +264,7 @@ class FlashinferMHAPrefill(KernelBase):
         ):
             for i in range(self.num_layers):
                 q = q_at_layer[i]
-                kv_cache = kv_cache_at_layer[i]
+                kv_cache = (kv_cache_at_layer[0][i], kv_cache_at_layer[1][i])
                 o = self.prefill_wrapper.run(q, kv_cache)
                 logger.debug(f"prefil_wrapper output' s shape is {o.shape}")
 

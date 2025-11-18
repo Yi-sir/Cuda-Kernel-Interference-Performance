@@ -9,8 +9,9 @@ import logging
 from tabulate import tabulate
 import torch
 
-from mha.kernel_triton_mha import TritonMHAPrefill
 from mha.kernel_fa3_mha_mla import FA3Prefill
+from mha.kernel_flashinfer_mha import FlashinferMHAPrefill
+from mha.kernel_triton_mha import TritonMHAPrefill
 from test_utils import generate_params
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +32,7 @@ all_params = {
     "attn_type": ["mha", "mla"],
 }
 
-ATTN_BACKENDS = [TritonMHAPrefill, FA3Prefill]
+ATTN_BACKENDS = [TritonMHAPrefill, FA3Prefill, FlashinferMHAPrefill]
 
 def get_varying_params(params_list):
     if not params_list:
