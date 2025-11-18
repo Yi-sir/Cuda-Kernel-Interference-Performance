@@ -24,9 +24,11 @@ class FlashMLAMHAPrefill(KernelBase):
 
     _default_params = {
         "batch_size": 8,
-        "q_head_num": 64,
-        "kv_head_num": 64,
-        "qk_head_dim": 192,
+        "q_head_num": 128,
+        "kv_head_num": 128,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "kv_lora_rank": 512,
         "v_head_dim": 128,
         "page_size": 16,
         "prompt_len": 1024,
@@ -42,7 +44,7 @@ class FlashMLAMHAPrefill(KernelBase):
 
     def prepare_input(self):
         def prepare(
-            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_head_dim, v_head_dim, page_size, tp, device
+            batch_size, prompt_len, cached_len, q_head_num, kv_head_num, qk_nope_head_dim, qk_rope_head_dim, kv_lora_rank, v_head_dim, page_size, tp, device
         ):
             assert q_head_num % tp == 0 or q_head_num == 1
             assert kv_head_num % tp == 0 or kv_head_num == 1
@@ -62,6 +64,8 @@ class FlashMLAMHAPrefill(KernelBase):
             total_tokens = batch_size * prompt_len * 2
             total_new_tokens = batch_size * new_token_len
             total_cached_tokens = batch_size * cached_len
+
+            qk_head_dim = qk_nope_head_dim + qk_rope_head_dim
 
             q = torch.randn(total_new_tokens, tp_q_head_num, qk_head_dim, dtype=torch.bfloat16)
             k = torch.randn(total_tokens, tp_kv_head_num, qk_head_dim, dtype=torch.bfloat16)
@@ -110,6 +114,7 @@ class FlashMLAMHAPrefill(KernelBase):
                 is_varlen=is_varlen
             )
             logger.debug(f"flashmla mha prefill output' s shape is {o.shape}")
+            return o
 
         return flashmla_mha_prefill_varlen(*self.inputs)
 
