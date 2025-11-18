@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
+import logging
 from typing import Any, List, Dict, Optional, Tuple
 
 import torch
 
 from .registry import register_kernel
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @register_kernel
 class KernelBase(ABC):
@@ -23,12 +26,15 @@ class KernelBase(ABC):
         return list(cls._default_params.keys())
 
     def set_params(self, params: Dict[str, Any]):
-        for key in params:
+        p = params.copy()
+        for key in p:
             if key not in self.__class__._default_params:
-                raise ValueError(
-                    f"Invalid param '{key}'. Valid params: {self.get_param_list()}"
-                )
-        self.params.update(params)
+                logger.warning(f"Unsupported param {key} for {str(self.__calss__)}, will be skipped.")
+                p.pop(key)
+                # raise ValueError(
+                #     f"Invalid param '{key}'. Valid params: {self.get_param_list()}"
+                # )
+        self.params.update(p)
         self.prepare_input()
 
     @abstractmethod
