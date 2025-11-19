@@ -10,7 +10,7 @@ from tabulate import tabulate
 import torch
 
 from mha.kernel_fa3_mha_mla import FA3Prefill
-from mha.kernel_flashinfer_mha import FlashinferMHAPrefill
+# from mha.kernel_flashinfer_mha import FlashinferMHAPrefill
 from mha.kernel_triton_mha import TritonMHAPrefill
 from test_utils import generate_params
 
@@ -19,20 +19,20 @@ logger = logging.getLogger(__name__)
 
 all_params = {
     "batch_size": [8],
-    "prompt_len": [1024],
-    "cached_len": [256],
+    "prompt_len": [512, 1024, 2048, 4096, 8192, 16384],
+    "cached_len": [1],
     "q_head_num": [128],
     "kv_head_num": [128],
     "qk_nope_head_dim": [128],
     "qk_rope_head_dim": [64],
     "kv_lora_rank": [512],
     "v_head_dim": [128],
-    "page_size": [1, 16],
+    "page_size": [1],
     "tp": [1, 8],
     "attn_type": ["mha", "mla"],
 }
 
-ATTN_BACKENDS = [TritonMHAPrefill, FA3Prefill, FlashinferMHAPrefill]
+ATTN_BACKENDS = [TritonMHAPrefill, FA3Prefill]
 
 def get_varying_params(params_list):
     if not params_list:

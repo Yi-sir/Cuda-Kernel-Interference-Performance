@@ -90,7 +90,7 @@ class FA3Prefill(KernelBase):
             max_seqlen_q = new_token_len
 
             layer_scaling = 0.1147213867929261
-            causal = False
+            causal = True
             layer_logit_cap = 0.0
             k_descale, v_descale = None, None
             num_splits = 0
