@@ -158,6 +158,132 @@ class FA3Prefill(KernelBase):
 
         return fa3_mha_prefill(*self.inputs)
 
+@register_kernel
+class FA3Decode(KernelBase):
+
+    _default_params = {
+        "batch_size": 8,
+        "prompt_len": 1024,
+        "q_head_num": 128,
+        "kv_head_num": 1,
+        "qk_nope_head_dim": 128,
+        "qk_rope_head_dim": 64,
+        "kv_lora_rank": 512,
+        "v_head_dim": 128,
+        "page_size": 1,
+        "tp": 1
+    }
+
+    _kernel_name = "fa3_mla_decode"
+    _key = ""
+
+    def __init__(self, device):
+        super().__init__(device)
+
+    def prepare_input(self):
+        def prepare(batch_size, prompt_len, q_head_num, kv_head_num, qk_nope_head_dim, qk_rope_head_dim,
+                    kv_lora_rank, v_head_dim, page_size, tp, device):
+            assert q_head_num % tp == 0 or q_head_num == 1
+            assert kv_head_num == 1
+
+            torch.set_default_device(device)
+            torch.cuda.set_device(device)
+
+            torch.manual_seed(0)
+
+            tp_q_head_num = max(q_head_num // tp, 1)
+            tp_kv_head_num = 1
+
+            qk_head_dim = kv_lora_rank + qk_rope_head_dim
+            v_head_dim = kv_lora_rank
+
+            max_token_slots = 3064640
+            max_pages = max_token_slots // page_size
+
+            q_rope = torch.randn(batch_size, tp_q_head_num, qk_head_dim - v_head_dim, dtype=torch.bfloat16)
+            k_cache = torch.randn(max_pages, page_size, tp_kv_head_num, qk_head_dim - v_head_dim, dtype=torch.bfloat16)
+            v_cache = torch.randn(max_pages, page_size, tp_kv_head_num, v_head_dim, dtype=torch.bfloat16)
+            qv = torch.randn(batch_size, tp_q_head_num, v_head_dim, dtype=torch.bfloat16)
+
+            page_table = torch.randint(low=0, high=max_pages, size=(batch_size, prompt_len), dtype=torch.int32)
+            cache_seqlens = torch.tensor([prompt_len] * batch_size, dtype=torch.int32)
+            cu_seqlens_q = torch.tensor([1 * i for i in range(batch_size + 1)], dtype=torch.int32)
+            cu_seqlens_k = torch.tensor([prompt_len * i for i in range(batch_size + 1)], dtype=torch.int32)
+            max_seqlen_q = 1
+
+            softmax_scale = qk_head_dim**-0.5
+            causal = True
+            softcap = 0.0
+            k_descale = None
+            v_descale = None
+            return_softmax_lse = False
+            num_splits = 0
+
+            return (
+                q_rope,
+                k_cache,
+                v_cache,
+                qv,
+                page_table,
+                cache_seqlens,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                softmax_scale,
+                causal,
+                softcap,
+                k_descale,
+                v_descale,
+                return_softmax_lse,
+                num_splits,
+            )
+
+        logger.debug(f"Prepare input for {self.__class__._kernel_name} >>>>>")
+        logger.debug(f"Params are {self.params}")
+        self.inputs = prepare(**self.params, device=self.device)
+
+    def launch_kernel(self):
+        def fa3_decode(
+            q_rope,
+            k_cache,
+            v_cache,
+            qv,
+            page_table,
+            cache_seqlens,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            softmax_scale,
+            causal,
+            softcap,
+            k_descale,
+            v_descale,
+            return_softmax_lse,
+            num_splits
+        ):
+            result = flash_attn_with_kvcache(
+                q=q_rope,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                qv=qv,
+                page_table=page_table,
+                cache_seqlens=cache_seqlens,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k_new=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_q,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                softcap=softcap,
+                k_descale=k_descale,
+                v_descale=v_descale,
+                return_softmax_lse=return_softmax_lse,
+                num_splits=num_splits
+            )
+            logger.debug(f"flashmla decode output' s shape is {result.shape}")
+            return result
+
+        return fa3_decode(*self.inputs)
+
 def test_fa3_mha_prefill():
     device = torch.device("cuda:3")
 
@@ -183,5 +309,33 @@ def test_fa3_mha_prefill():
         )
     print(events.table(sort_by="cuda_time_total", row_limit=10,))
 
+
+def test_fa3_mla_decode():
+    device = torch.device("cuda:3")
+
+    logger.setLevel(logging.DEBUG)
+    k = FA3Decode(device)
+    k.prepare_input()
+
+    with torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CUDA,
+            torch.profiler.ProfilerActivity.CPU
+        ],
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True
+    ) as prof:
+        k.launch_kernel()
+
+    events = prof.key_averages()
+    for evt in events:
+        print(
+            f"event.device_type: {evt.device_type}, device_time: {evt.device_time}"
+        )
+    print(events.table(sort_by="cuda_time_total", row_limit=10,))
+
+
 if __name__ == "__main__":
-    test_fa3_mha_prefill()
+    # test_fa3_mha_prefill()
+    test_fa3_mla_decode()
